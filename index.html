@@ -156,12 +156,10 @@
 
   /* ---- explainer ---- */
   .explain { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
-  .explain summary {
-    cursor: pointer; font-weight: 600; color: var(--text-primary);
-    font-size: 14px; list-style-position: outside; margin-left: 2px;
+  .explain h2 {
+    font-size: 14px; font-weight: 600; color: var(--text-primary);
+    margin: 0 0 12px; letter-spacing: -0.01em;
   }
-  .explain summary::marker { color: var(--text-muted); }
-  .explain[open] summary { margin-bottom: 12px; }
   .explain p { margin: 0 0 12px; }
   .explain p:last-child { margin-bottom: 0; }
   .explain b { color: var(--text-primary); font-weight: 600; }
@@ -216,34 +214,31 @@
     <div class="legend" id="legend"></div>
   </div>
 
-  <details class="card explain" id="explain" hidden>
-    <summary>How to read this</summary>
+  <section class="card explain" id="explain" hidden>
+    <h2>A quick guide</h2>
 
-    <p><b>WBGT is not air temperature.</b> It folds heat, humidity, sun and wind into a
-    single number for how hard your body has to work to stay cool. Singapore's humidity
-    is what makes it bite: 30° WBGT is far more punishing than 30° on a thermometer.
-    Sweat can't evaporate, so you can't dump heat.</p>
+    <p>Each row is one hour of your day ahead. The <b>bar shows that hour's WBGT</b> —
+    the shorter the bar, the easier the run. The highlighted rows are your window.</p>
 
-    <p>Each row is one hour. The <b>bar length</b> is that hour's WBGT — shorter is
-    easier. The highlighted rows are the recommended window.</p>
+    <p><b>WBGT isn't air temperature.</b> It rolls heat, humidity, sun and wind into one
+    number for how hard your body has to work to stay cool. Humidity is what makes it
+    bite here: 30° WBGT is much tougher going than 30° on a thermometer, because your
+    sweat can't evaporate and the heat has nowhere to go.</p>
 
     <table class="guide" id="guide"></table>
 
-    <p><b>Struck-out hours are rain-vetoed.</b> Any hour with at least a
-    <span id="veto-pct"></span> chance of rain is ruled out no matter how good its heat
-    score. On a thundery day that can eliminate most of the afternoon — that's the
-    forecast being honest, not the app being broken.</p>
+    <p><b>Struck-out hours have rain on the way.</b> Anything with a
+    <span id="veto-pct"></span> chance or higher is set aside, however kind the heat
+    looks. On a thundery day that can rule out most of the afternoon — that's Singapore,
+    not a glitch.</p>
 
-    <p class="caveat"><b>Worth knowing before you trust it.</b> The WBGT here is
-    <i>estimated</i> from Open-Meteo's hourly forecast, not measured. It uses
-    thermodynamic wet-bulb where the formula wants natural wet-bulb, so it reads
-    <b>low</b> — treat borderline hours as worse than shown. It is not NEA's official
-    WBGT, and the band cutoffs are set for people already acclimatised to the tropics.
-    Use it to pick between hours, not to decide whether heatstroke is possible.</p>
-
-    <p class="caveat">Nothing here knows about you — your fitness, hydration, sleep, or
-    whether you're ill. It only knows the air.</p>
-  </details>
+    <p class="caveat">A note on the numbers: this WBGT is <i>estimated</i> from
+    Open-Meteo's hourly forecast rather than measured, and the way it's derived makes it
+    read a little <b>low</b> — so treat borderline hours as slightly worse than shown.
+    It isn't NEA's official WBGT, and the cut-offs assume you're already used to the
+    heat. It's best for choosing between hours rather than for judging whether
+    conditions are genuinely dangerous.</p>
+  </section>
 </main>
 
 <script>
@@ -534,10 +529,9 @@ async function main() {
     + (pos ? '' : ` · ${CONFIG.FALLBACK.label}`)
     + ' · <button id="refresh">refresh</button>';
   $('refresh').onclick = () => {
-    // Drop cached forecasts only - not the first-visit flag.
     try {
       Object.keys(localStorage)
-        .filter(k => k.startsWith('rw:') && k !== 'rw:seen')
+        .filter(k => k.startsWith('rw:'))
         .forEach(k => localStorage.removeItem(k));
     } catch {}
     location.reload();
@@ -564,14 +558,6 @@ async function main() {
     $('verdict').hidden = false;
     $('strip').hidden = false;
     $('explain').hidden = false;
-
-    // Explain fully on a first visit, then stay out of the way.
-    try {
-      if (!localStorage.getItem('rw:seen')) {
-        $('explain').open = true;
-        localStorage.setItem('rw:seen', '1');
-      }
-    } catch { $('explain').open = true; }
   } catch (err) {
     $('geowarn').hidden = false;
     $('geowarn').textContent = `Could not load forecast: ${err.message}`;
