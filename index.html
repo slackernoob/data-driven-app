@@ -72,6 +72,22 @@
     margin-bottom: 14px;
   }
 
+  /* ---- when-do-you-run picker ---- */
+  .slots {
+    display: flex; gap: 3px; margin-bottom: 14px; padding: 4px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .slots button {
+    flex: 1; font: inherit; font-size: 13px; padding: 8px 4px;
+    border: 0; border-radius: 7px; background: none;
+    color: var(--text-secondary); cursor: pointer; white-space: nowrap;
+  }
+  .slots button:hover { color: var(--text-primary); }
+  .slots button[aria-pressed="true"] {
+    background: var(--surface-0); color: var(--text-primary); font-weight: 600;
+  }
+  .slots button:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: -2px; }
+
   /* ---- hero: the answer ---- */
   .verdict-label {
     font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
@@ -191,14 +207,16 @@
 <body>
 <main>
   <h1>Run Window SG</h1>
-  <p class="tagline">Finds the least punishing time to run in the next 12 hours,
-    by how hard it will be for your body to shed heat.</p>
+  <p class="tagline">Finds the least punishing time to run, by how hard it will be
+    for your body to shed heat.</p>
   <p class="sub" id="loc">Locating…</p>
 
   <div class="warn" id="geowarn" hidden></div>
 
+  <div class="slots" id="slots" role="group" aria-label="When do you want to run?" hidden></div>
+
   <div class="card" id="verdict" hidden>
-    <div class="verdict-label">Best window, next 12 hours</div>
+    <div class="verdict-label" id="v-label">Best window</div>
     <div class="verdict-window" id="v-window">—</div>
     <div class="verdict-detail" id="v-detail"></div>
   </div>
@@ -217,8 +235,11 @@
   <section class="card explain" id="explain" hidden>
     <h2>A quick guide</h2>
 
-    <p>Each row is one hour of your day ahead. The <b>bar shows that hour's WBGT</b> —
-    the shorter the bar, the easier the run. The highlighted rows are your window.</p>
+    <p><b>Pick when you'd like to run</b> using the buttons at the top. If that part of
+    the day has already gone by, you'll see tomorrow's instead.</p>
+
+    <p>Each row is one hour. The <b>bar shows that hour's WBGT</b> — the shorter the bar,
+    the easier the run. The highlighted rows are your window.</p>
 
     <p><b>WBGT isn't air temperature.</b> It rolls heat, humidity, sun and wind into one
     number for how hard your body has to work to stay cool. Humidity is what makes it
@@ -246,7 +267,21 @@
 // Tunables. Everything you might want to argue with lives here.
 // ---------------------------------------------------------------------------
 const CONFIG = {
-  HOURS: 12,
+  HOURS: 12,                 // length of the "Next 12h" view
+
+  // Time-of-day slots. `start` inclusive, `end` exclusive, in local hours - so
+  // evening 17→23 means the last runnable hour begins at 10pm and ends at 11pm.
+  SLOTS: [
+    { key: 'next12',    label: 'Next 12h'  },
+    { key: 'morning',   label: 'Morning',   start:  5, end: 11 },
+    { key: 'afternoon', label: 'Afternoon', start: 11, end: 17 },
+    { key: 'evening',   label: 'Evening',   start: 17, end: 23 },
+  ],
+
+  // If fewer than this many hours of the chosen slot remain today, skip to
+  // tomorrow's rather than answering with a sliver.
+  MIN_SLOT_HOURS: 2,
+
 
   // An hour with at least this precipitation probability is vetoed outright,
   // however good its heat score. In SG this is a blunt instrument - raise it
@@ -362,7 +397,8 @@ const FIELDS = [
 ];
 
 async function fetchForecast(lat, lon) {
-  const key = `rw:${lat.toFixed(3)},${lon.toFixed(3)}`;
+  // v2: horizon widened to 3 days so "tomorrow evening" is always in range.
+  const key = `rw:v2:${lat.toFixed(3)},${lon.toFixed(3)}`;
   try {
     const hit = JSON.parse(localStorage.getItem(key) || 'null');
     if (hit && Date.now() - hit.at < CONFIG.CACHE_MINUTES * 60000) return hit.data;
@@ -371,7 +407,7 @@ async function fetchForecast(lat, lon) {
   const url = 'https://api.open-meteo.com/v1/forecast'
     + `?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`
     + `&hourly=${FIELDS.join(',')}`
-    + '&forecast_days=2&timezone=Asia%2FSingapore';
+    + '&forecast_days=3&timezone=Asia%2FSingapore';
 
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Open-Meteo returned ${res.status}`);
@@ -386,7 +422,7 @@ function buildHours(data) {
   let i = h.time.indexOf(sgHourKey());
   if (i < 0) i = 0;                                     // clock skew - start at the top
 
-  return h.time.slice(i, i + CONFIG.HOURS).map((t, n) => {
+  return h.time.slice(i).map((t, n) => {                // every hour from now on
     const k = i + n;
     const wbgt = estimateWBGT({
       airC:     h.temperature_2m[k],
@@ -405,6 +441,53 @@ function buildHours(data) {
       wind: h.wind_speed_10m[k],
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Slot selection - pick the hours belonging to the chosen part of the day.
+//
+// `all` starts at the current hour, so anything in it is already in the future.
+// We therefore just take the earliest date that still offers a usable stretch:
+// today's remainder if there's enough of it, otherwise tomorrow's whole slot.
+// ---------------------------------------------------------------------------
+function nextDate(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function slotTitle(slot, date, today, hours) {
+  const when = date === today          ? (Number(hours[0].time.slice(11, 13)) > slot.start
+                                            ? 'Rest of this' : 'This')
+             : date === nextDate(today) ? 'Tomorrow'
+             : date;
+  const name = slot.label.toLowerCase();
+  return when === date ? `${slot.label}, ${date}` : `${when} ${name}`;
+}
+
+function selectHours(all, key) {
+  const slot = CONFIG.SLOTS.find(s => s.key === key) ?? CONFIG.SLOTS[0];
+  if (slot.key === 'next12') {
+    return { hours: all.slice(0, CONFIG.HOURS), title: `Next ${CONFIG.HOURS} hours`, slot };
+  }
+
+  const today = all[0].time.slice(0, 10);
+  const byDate = new Map();
+  for (const h of all) {
+    const hr = Number(h.time.slice(11, 13));
+    if (hr < slot.start || hr >= slot.end) continue;
+    const d = h.time.slice(0, 10);
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(h);
+  }
+
+  for (const date of [...byDate.keys()].sort()) {
+    const hours = byDate.get(date);
+    // A sliver of today is worse than a clean answer for tomorrow.
+    if (date === today && hours.length < CONFIG.MIN_SLOT_HOURS) continue;
+    return { hours, title: slotTitle(slot, date, today, hours), slot };
+  }
+  return { hours: [], title: slot.label, slot };
 }
 
 // ---------------------------------------------------------------------------
@@ -433,8 +516,9 @@ function renderRows(hours, win) {
       : h.vetoed ? `<i class="icon">✗</i>Rain`
       : band     ? `<i class="icon">${band.icon}</i>${band.label}`
                  : '';
+    const isNow = h.time === sgHourKey();
     const cls = ['row',
-      i === 0 ? 'is-now' : '',
+      isNow ? 'is-now' : '',
       h.vetoed ? 'is-vetoed' : '',
       win && i >= win.start && i <= win.end ? 'is-best' : '',
     ].join(' ').trim();
@@ -444,7 +528,7 @@ function renderRows(hours, win) {
       : band ? `${band.icon} ${band.label}` : 'No data';
 
     return `<div class="${cls}" tabindex="0">
-      <div class="row-time">${i === 0 ? 'now' : h.label}</div>
+      <div class="row-time">${isNow ? 'now' : h.label}</div>
       <div class="track"><div class="bar" style="width:${
         h.wbgt == null ? 0 : scalePct(h.wbgt)}%;background:${color}"></div></div>
       <div class="row-val">${
@@ -470,18 +554,21 @@ function renderRows(hours, win) {
       <i class="icon">✗</i>Rain ≥${CONFIG.RAIN_VETO_POP}%</span>`;
 }
 
-function renderVerdict(hours, win) {
+function renderVerdict(hours, win, title) {
+  $('v-label').textContent = `Best window · ${title}`;
   if (!win) {
     $('v-window').textContent = 'No clear window';
-    $('v-detail').textContent =
-      `Every hour in the next 12 has a ≥${CONFIG.RAIN_VETO_POP}% chance of rain.`;
+    $('v-detail').textContent = hours.length
+      ? `Every hour has a ≥${CONFIG.RAIN_VETO_POP}% chance of rain.`
+      : 'No hours available for this part of the day.';
     return;
   }
   const a = hours[win.start], b = hours[win.end];
+  const startsNow = a.time === sgHourKey();
   const band = bandFor(win.best.wbgt);
   $('v-window').textContent = win.start === win.end
-    ? (win.start === 0 ? 'Now' : a.label)
-    : `${win.start === 0 ? 'Now' : a.label}–${hourEndLabel(b.time)}`;
+    ? (startsNow ? 'Now' : a.label)
+    : `${startsNow ? 'Now' : a.label}–${hourEndLabel(b.time)}`;
   $('v-detail').innerHTML =
     `${band.icon} <b>${band.label}</b> — heat stress bottoms out at `
     + `WBGT ${win.best.wbgt.toFixed(1)}°, rain ${win.best.pop}%, UV ${win.best.uv?.toFixed(0)}.`
@@ -550,13 +637,36 @@ async function main() {
   }
 
   try {
-    const hours = buildHours(await fetchForecast(lat, lon));
-    const win = bestWindow(hours);
-    renderVerdict(hours, win);
-    renderRows(hours, win);
+    const all = buildHours(await fetchForecast(lat, lon));
+
+    let current = 'next12';
+    try { current = localStorage.getItem('rw:slot') || current; } catch {}
+    if (!CONFIG.SLOTS.some(s => s.key === current)) current = 'next12';
+
+    const draw = key => {
+      current = key;
+      try { localStorage.setItem('rw:slot', key); } catch {}
+      [...$('slots').children].forEach(b =>
+        b.setAttribute('aria-pressed', String(b.dataset.key === key)));
+      const { hours, title } = selectHours(all, key);
+      const win = bestWindow(hours);
+      renderVerdict(hours, win, title);
+      renderRows(hours, win);
+      $('strip').hidden = hours.length === 0;
+    };
+
+    $('slots').innerHTML = CONFIG.SLOTS.map(s =>
+      `<button type="button" data-key="${s.key}" aria-pressed="false">${s.label}</button>`
+    ).join('');
+    $('slots').onclick = e => {
+      const b = e.target.closest('button');
+      if (b) draw(b.dataset.key);
+    };
+
+    draw(current);
     renderGuide();
+    $('slots').hidden = false;
     $('verdict').hidden = false;
-    $('strip').hidden = false;
     $('explain').hidden = false;
   } catch (err) {
     $('geowarn').hidden = false;

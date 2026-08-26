@@ -1,6 +1,9 @@
 # Run Window SG
 
-A single static page that answers one question: **when in the next 12 hours should I run?**
+A single static page that answers one question: **when should I run?**
+
+Pick a part of the day — Next 12h, Morning, Afternoon or Evening — and it shows the best
+window within it. If that slot has already passed, you get tomorrow's.
 
 Scored on estimated WBGT (heat stress), with rain as a hard veto. No build step, no
 dependencies, no API keys, no backend — one `index.html` served from GitHub Pages.
@@ -29,6 +32,8 @@ Everything worth arguing with is in `CONFIG` at the top of the script:
 | Key | Default | Note |
 |---|---|---|
 | `RAIN_VETO_POP` | `50` | Blunt. On a thundery day this vetoes most of the afternoon. |
+| `SLOTS` | 5–11 / 11–17 / 17–23 | Slot boundaries, `start` inclusive and `end` exclusive. |
+| `MIN_SLOT_HOURS` | `2` | Fewer hours than this left in today's slot → roll to tomorrow. |
 | `BANDS` | 28 / 30 / 32 °C | Verify against a source you trust. |
 | `GLOBE_SOLAR_K`, `GLOBE_WIND_K` | `0.0155`, `0.15` | Globe-temp heuristic. |
 | `WINDOW_TOLERANCE_C` | `0.7` | How far from the best hour still counts as the window. |
