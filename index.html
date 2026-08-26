@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Run Window SG</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f3f0;
+    --surface-1: #fcfcfb;
+    --border:    #e2e1dc;
+    --track:     #eceae5;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #82817c;
+
+    /* Status palette - fixed, never themed. Always paired with icon + label. */
+    --good:     #0ca30c;
+    --warning:  #fab219;
+    --serious:  #ec835a;
+    --critical: #d03b3b;
+    --vetoed:   #a9a7a0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-0: #111110;
+      --surface-1: #1a1a19;
+      --border:    #33332f;
+      --track:     #2a2a27;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #8d8c83;
+      --vetoed:   #5c5b56;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    overflow-x: hidden;     /* absolutely-positioned tooltips must not widen the page */
+    padding: 24px 16px 48px;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 560px; margin: 0 auto; }
+
+  h1 {
+    font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+    margin: 0 0 2px;
+  }
+  .sub { color: var(--text-muted); font-size: 13px; margin: 0 0 20px; }
+  .sub button {
+    font: inherit; color: var(--text-secondary); background: none;
+    border: 0; padding: 0; cursor: pointer; text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 14px;
+  }
+
+  /* ---- hero: the answer ---- */
+  .verdict-label {
+    font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px;
+  }
+  .verdict-window {
+    font-size: 30px; font-weight: 650; letter-spacing: -0.02em;
+    line-height: 1.15; margin-bottom: 6px;
+  }
+  .verdict-detail { font-size: 14px; color: var(--text-secondary); }
+
+  /* ---- hour rows ---- */
+  .rows { display: flex; flex-direction: column; gap: 2px; } /* 2px surface gap between marks */
+  .row {
+    display: grid;
+    grid-template-columns: 44px 1fr 46px 60px;
+    align-items: center;
+    gap: 9px;
+    padding: 5px 4px;
+    border-radius: 6px;
+    position: relative;
+    cursor: default;
+  }
+  .row:hover, .row:focus-visible { background: var(--surface-0); outline: none; }
+  .row-time { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .row.is-now .row-time { color: var(--text-primary); font-weight: 650; }
+  .track { height: 10px; background: var(--track); border-radius: 5px; overflow: hidden; }
+  .bar {
+    height: 100%;
+    border-radius: 0 4px 4px 0;   /* 4px rounded data-end, anchored to baseline */
+    transition: width .18s ease;
+  }
+  .row-val {
+    font-size: 13px; text-align: right; font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+  }
+  .row-val .unit { color: var(--text-muted); font-size: 11px; }
+  /* Caution and Curtail fail the normal-vision separation floor (ΔE 13.6), so the
+     band is direct-labelled at every transition. Colour is never load-bearing. */
+  .row-band {
+    font-size: 11px; color: var(--text-secondary); white-space: nowrap;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .row-band .icon { color: var(--text-primary); }
+  .row.is-vetoed .row-val { color: var(--text-muted); text-decoration: line-through; }
+  .row.is-best { background: var(--surface-0); box-shadow: inset 2px 0 0 var(--text-primary); }
+
+  .tip {
+    position: absolute; left: 44px; right: 0; top: calc(100% - 2px); z-index: 10;
+    max-width: 300px;
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 11px;
+    font-size: 12px; line-height: 1.55; color: var(--text-secondary);
+    box-shadow: 0 6px 20px rgb(0 0 0 / .13);
+    pointer-events: none;
+    opacity: 0; transform: translateY(-3px); transition: opacity .12s ease, transform .12s ease;
+  }
+  .row:hover .tip, .row:focus-visible .tip { opacity: 1; transform: translateY(0); }
+  .tip b { color: var(--text-primary); font-weight: 600; }
+
+  /* ---- legend: status is never color-alone ---- */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+    padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch {
+    width: 9px; height: 9px; border-radius: 2px; flex: none;
+  }
+  .icon { font-size: 10px; font-weight: 700; width: 11px; text-align: center; }
+
+  .note {
+    font-size: 12px; line-height: 1.6; color: var(--text-muted);
+  }
+  .note code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+    background: var(--surface-0); padding: 1px 4px; border-radius: 3px;
+  }
+  .warn {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-left: 3px solid var(--warning);
+    border-radius: 6px; padding: 10px 12px; margin-bottom: 14px;
+    font-size: 13px; color: var(--text-secondary);
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Run Window SG</h1>
+  <p class="sub" id="loc">Locating…</p>
+
+  <div class="warn" id="geowarn" hidden></div>
+
+  <div class="card" id="verdict" hidden>
+    <div class="verdict-label">Best window, next 12 hours</div>
+    <div class="verdict-window" id="v-window">—</div>
+    <div class="verdict-detail" id="v-detail"></div>
+  </div>
+
+  <div class="card" id="strip" hidden>
+    <div class="rows" id="rows"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <p class="note" id="method" hidden></p>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Tunables. Everything you might want to argue with lives here.
+// ---------------------------------------------------------------------------
+const CONFIG = {
+  HOURS: 12,
+
+  // An hour with at least this precipitation probability is vetoed outright,
+  // however good its heat score. In SG this is a blunt instrument - raise it
+  // if the app blacks out most of your afternoon.
+  RAIN_VETO_POP: 50,
+
+  // WBGT bands, tuned for heat-acclimatised tropical runners. ACSM's published
+  // bands are considerably stricter (they'd flag black-flag most SG afternoons,
+  // which makes them useless here). Verify against a source you trust.
+  BANDS: [
+    { max: 28,       key: 'good',     label: 'Good',    icon: '✓' },
+    { max: 30,       key: 'warning',  label: 'Caution', icon: '!'      },
+    { max: 32,       key: 'serious',  label: 'Curtail', icon: '!!'     },
+    { max: Infinity, key: 'critical', label: 'Avoid',   icon: '✕' },
+  ],
+
+  // Black-globe temperature heuristic: Tg = Ta + k_solar*S - k_wind*v.
+  // Not a validated model - a transparent linear stand-in calibrated so a clear
+  // tropical noon (S~900 W/m2, light wind) lands ~13 C above air temperature.
+  GLOBE_SOLAR_K: 0.0155,   // per W/m2
+  GLOBE_WIND_K:  0.15,     // per km/h
+
+  // Hours within this many degrees of the best hour extend the window.
+  WINDOW_TOLERANCE_C: 0.7,
+
+  // Bar scale domain (deg C WBGT).
+  SCALE_MIN: 22,
+  SCALE_MAX: 36,
+
+  FALLBACK: { lat: 1.3521, lon: 103.8198, label: 'Singapore (default)' },
+
+  // Browser geolocation on a laptop is IP-derived and can be kilometres out.
+  // On a 50 km island that matters, so say so rather than fail silently.
+  GEO_ACCURACY_WARN_M: 2000,
+
+  CACHE_MINUTES: 10,
+};
+
+// ---------------------------------------------------------------------------
+// Time helpers - Open-Meteo is asked for Asia/Singapore local time, so we match
+// hours as bare "YYYY-MM-DDTHH:00" strings rather than reasoning about offsets.
+// ---------------------------------------------------------------------------
+function sgHourKey(date = new Date()) {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).reduce((a, x) => (a[x.type] = x.value, a), {});
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:00`;
+}
+
+function labelFor24(h) {
+  const hr = ((h % 24) + 24) % 24;                      // 23:00 + 1h must read 12am, not 12pm
+  const ampm = hr < 12 ? 'am' : 'pm';
+  const h12 = hr % 12 === 0 ? 12 : hr % 12;
+  return `${h12}${ampm}`;
+}
+const hourLabel    = iso => labelFor24(Number(iso.slice(11, 13)));
+const hourEndLabel = iso => labelFor24(Number(iso.slice(11, 13)) + 1);
+
+// ---------------------------------------------------------------------------
+// The metric.
+//
+// WBGT(outdoor) = 0.7*Tnwb + 0.2*Tg + 0.1*Ta
+//
+// Caveat that matters: Open-Meteo gives thermodynamic wet-bulb, not the NATURAL
+// wet-bulb (Tnwb) the formula wants. Natural wet-bulb runs warmer under solar
+// load, so this estimate reads low - conservative in the wrong direction. It is
+// our own number, not NEA's official WBGT, and is labelled as such in the UI.
+// ---------------------------------------------------------------------------
+function estimateWBGT({ airC, wetBulbC, solarWm2, windKmh }) {
+  if (airC == null || wetBulbC == null) return null;
+  const solar = solarWm2 ?? 0;
+  const wind  = windKmh ?? 0;
+  const globeRise = Math.max(0, CONFIG.GLOBE_SOLAR_K * solar - CONFIG.GLOBE_WIND_K * wind);
+  const globeC = airC + globeRise;
+  return 0.7 * wetBulbC + 0.2 * globeC + 0.1 * airC;
+}
+
+function bandFor(wbgt) {
+  return CONFIG.BANDS.find(b => wbgt < b.max) ?? CONFIG.BANDS[CONFIG.BANDS.length - 1];
+}
+
+// ---------------------------------------------------------------------------
+// Best window: lowest non-vetoed WBGT, extended over adjacent non-vetoed hours
+// that stay within tolerance of it. Returns null if rain vetoes everything.
+// ---------------------------------------------------------------------------
+function bestWindow(hours) {
+  const open = hours.filter(h => !h.vetoed && h.wbgt != null);
+  if (!open.length) return null;
+
+  const best = open.reduce((a, b) => (b.wbgt < a.wbgt ? b : a));
+  const i = hours.indexOf(best);
+  const ok = h => h && !h.vetoed && h.wbgt != null
+                    && h.wbgt <= best.wbgt + CONFIG.WINDOW_TOLERANCE_C;
+
+  let start = i, end = i;
+  while (ok(hours[start - 1])) start--;
+  while (ok(hours[end + 1])) end++;
+  return { start, end, best };
+}
+
+// ---------------------------------------------------------------------------
+// Data
+// ---------------------------------------------------------------------------
+const FIELDS = [
+  'temperature_2m', 'relative_humidity_2m', 'wet_bulb_temperature_2m',
+  'apparent_temperature', 'precipitation_probability', 'uv_index',
+  'wind_speed_10m', 'shortwave_radiation',
+];
+
+async function fetchForecast(lat, lon) {
+  const key = `rw:${lat.toFixed(3)},${lon.toFixed(3)}`;
+  try {
+    const hit = JSON.parse(localStorage.getItem(key) || 'null');
+    if (hit && Date.now() - hit.at < CONFIG.CACHE_MINUTES * 60000) return hit.data;
+  } catch { /* private mode, corrupt entry - just refetch */ }
+
+  const url = 'https://api.open-meteo.com/v1/forecast'
+    + `?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`
+    + `&hourly=${FIELDS.join(',')}`
+    + '&forecast_days=2&timezone=Asia%2FSingapore';
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Open-Meteo returned ${res.status}`);
+  const data = await res.json();
+
+  try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), data })); } catch {}
+  return data;
+}
+
+function buildHours(data) {
+  const h = data.hourly;
+  let i = h.time.indexOf(sgHourKey());
+  if (i < 0) i = 0;                                     // clock skew - start at the top
+
+  return h.time.slice(i, i + CONFIG.HOURS).map((t, n) => {
+    const k = i + n;
+    const wbgt = estimateWBGT({
+      airC:     h.temperature_2m[k],
+      wetBulbC: h.wet_bulb_temperature_2m[k],
+      solarWm2: h.shortwave_radiation[k],
+      windKmh:  h.wind_speed_10m[k],
+    });
+    const pop = h.precipitation_probability[k] ?? 0;
+    return {
+      time: t, label: hourLabel(t), wbgt, pop,
+      vetoed: pop >= CONFIG.RAIN_VETO_POP,
+      airC: h.temperature_2m[k],
+      rh:   h.relative_humidity_2m[k],
+      feels: h.apparent_temperature[k],
+      uv:   h.uv_index[k],
+      wind: h.wind_speed_10m[k],
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+
+function scalePct(wbgt) {
+  const { SCALE_MIN: lo, SCALE_MAX: hi } = CONFIG;
+  return Math.max(3, Math.min(100, ((wbgt - lo) / (hi - lo)) * 100));
+}
+
+// Label a row's band only where it differs from the row above - selective direct
+// labels, so the strip reads as bands of time rather than a number on every line.
+function stateOf(h) {
+  if (h.vetoed) return 'rain';
+  return h.wbgt == null ? 'none' : bandFor(h.wbgt).key;
+}
+
+function renderRows(hours, win) {
+  $('rows').innerHTML = hours.map((h, i) => {
+    const band = h.wbgt == null ? null : bandFor(h.wbgt);
+    const color = h.vetoed || !band ? 'var(--vetoed)' : `var(--${band.key})`;
+    const changed = i === 0 || stateOf(h) !== stateOf(hours[i - 1]);
+    const bandCell = !changed ? ''
+      : h.vetoed ? `<i class="icon">✗</i>Rain`
+      : band     ? `<i class="icon">${band.icon}</i>${band.label}`
+                 : '';
+    const cls = ['row',
+      i === 0 ? 'is-now' : '',
+      h.vetoed ? 'is-vetoed' : '',
+      win && i >= win.start && i <= win.end ? 'is-best' : '',
+    ].join(' ').trim();
+
+    const status = h.vetoed
+      ? `Rain — vetoed at ≥${CONFIG.RAIN_VETO_POP}%`
+      : band ? `${band.icon} ${band.label}` : 'No data';
+
+    return `<div class="${cls}" tabindex="0">
+      <div class="row-time">${i === 0 ? 'now' : h.label}</div>
+      <div class="track"><div class="bar" style="width:${
+        h.wbgt == null ? 0 : scalePct(h.wbgt)}%;background:${color}"></div></div>
+      <div class="row-val">${
+        h.wbgt == null ? '—' : h.wbgt.toFixed(1) + '<span class="unit">°</span>'}</div>
+      <div class="row-band">${bandCell}</div>
+      <div class="tip">
+        <b>${h.label}</b> · ${status}<br>
+        ${h.airC?.toFixed(1)}°C air · ${h.rh}% RH · ${h.wind?.toFixed(0)} km/h<br>
+        rain ${h.pop}% · UV ${h.uv?.toFixed(1)} · feels ${h.feels?.toFixed(1)}°C
+      </div>
+    </div>`;
+  }).join('');
+
+  $('legend').innerHTML = CONFIG.BANDS.map((b, i) => {
+    const prev = i === 0 ? null : CONFIG.BANDS[i - 1].max;
+    const range = prev === null ? `under ${b.max}°`
+                : b.max === Infinity ? `${prev}°+`
+                : `${prev}–${b.max}°`;
+    return `<span><i class="swatch" style="background:var(--${b.key})"></i>
+      <i class="icon">${b.icon}</i>${b.label}
+      <span style="color:var(--text-muted)">${range}</span></span>`;
+  }).join('') + `<span><i class="swatch" style="background:var(--vetoed)"></i>
+      <i class="icon">✗</i>Rain ≥${CONFIG.RAIN_VETO_POP}%</span>`;
+}
+
+function renderVerdict(hours, win) {
+  if (!win) {
+    $('v-window').textContent = 'No clear window';
+    $('v-detail').textContent =
+      `Every hour in the next 12 has a ≥${CONFIG.RAIN_VETO_POP}% chance of rain.`;
+    return;
+  }
+  const a = hours[win.start], b = hours[win.end];
+  const band = bandFor(win.best.wbgt);
+  $('v-window').textContent = win.start === win.end
+    ? (win.start === 0 ? 'Now' : a.label)
+    : `${win.start === 0 ? 'Now' : a.label}–${hourEndLabel(b.time)}`;
+  $('v-detail').innerHTML =
+    `${band.icon} <b>${band.label}</b> · WBGT ${win.best.wbgt.toFixed(1)}°C `
+    + `at its best · rain ${win.best.pop}% · UV ${win.best.uv?.toFixed(1)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+function getPosition() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude,
+                     accuracy: p.coords.accuracy }),
+      () => resolve(null),
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 },
+    );
+  });
+}
+
+async function main() {
+  const pos = await getPosition();
+  const lat = pos ? pos.lat : CONFIG.FALLBACK.lat;
+  const lon = pos ? pos.lon : CONFIG.FALLBACK.lon;
+
+  $('loc').innerHTML = `${lat.toFixed(3)}, ${lon.toFixed(3)}`
+    + (pos ? '' : ` · ${CONFIG.FALLBACK.label}`)
+    + ' · <button id="refresh">refresh</button>';
+  $('refresh').onclick = () => {
+    try { localStorage.clear(); } catch {}
+    location.reload();
+  };
+
+  // A silently-wrong fix is the failure mode here, so surface it loudly.
+  if (!pos) {
+    $('geowarn').hidden = false;
+    $('geowarn').textContent =
+      'Location unavailable — using central Singapore. Readings are for that point, not yours.';
+  } else if (pos.accuracy > CONFIG.GEO_ACCURACY_WARN_M) {
+    $('geowarn').hidden = false;
+    $('geowarn').textContent =
+      `Location accurate to only ±${(pos.accuracy / 1000).toFixed(1)} km — `
+      + 'likely an IP-based fix. On a 50 km island that can be the wrong end of it.';
+  }
+
+  try {
+    const hours = buildHours(await fetchForecast(lat, lon));
+    const win = bestWindow(hours);
+    renderVerdict(hours, win);
+    renderRows(hours, win);
+    $('verdict').hidden = false;
+    $('strip').hidden = false;
+    $('method').hidden = false;
+    $('method').innerHTML =
+      'WBGT estimated as <code>0.7·Twb + 0.2·Tg + 0.1·Ta</code> from Open-Meteo '
+      + 'hourly wet-bulb, air temperature, solar radiation and wind. Uses thermodynamic '
+      + 'wet-bulb rather than natural wet-bulb, so it reads low against NEA’s official '
+      + 'WBGT — this is an estimate, not a published figure.';
+  } catch (err) {
+    $('geowarn').hidden = false;
+    $('geowarn').textContent = `Could not load forecast: ${err.message}`;
+  }
+}
+
+main();
+</script>
+</body>
+</html>
