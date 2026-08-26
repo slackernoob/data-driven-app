@@ -53,6 +53,10 @@
     font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
     margin: 0 0 2px;
   }
+  .tagline {
+    font-size: 14px; line-height: 1.5; color: var(--text-secondary);
+    margin: 0 0 10px; max-width: 44ch;
+  }
   .sub { color: var(--text-muted); font-size: 13px; margin: 0 0 20px; }
   .sub button {
     font: inherit; color: var(--text-secondary); background: none;
@@ -78,8 +82,18 @@
     line-height: 1.15; margin-bottom: 6px;
   }
   .verdict-detail { font-size: 14px; color: var(--text-secondary); }
+  .v-advice { display: inline-block; margin-top: 5px; color: var(--text-muted); font-size: 13px; }
 
   /* ---- hour rows ---- */
+  .colhead {
+    display: grid; grid-template-columns: 44px 1fr 46px 60px;
+    gap: 9px; align-items: end; padding: 0 4px 8px;
+    font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .colhead-r { text-align: right; }
+  .colhead-scale { display: flex; justify-content: space-between; }
+  .colhead-scale i { font-style: normal; }
   .rows { display: flex; flex-direction: column; gap: 2px; } /* 2px surface gap between marks */
   .row {
     display: grid;
@@ -140,6 +154,26 @@
   }
   .icon { font-size: 10px; font-weight: 700; width: 11px; text-align: center; }
 
+  /* ---- explainer ---- */
+  .explain { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+  .explain summary {
+    cursor: pointer; font-weight: 600; color: var(--text-primary);
+    font-size: 14px; list-style-position: outside; margin-left: 2px;
+  }
+  .explain summary::marker { color: var(--text-muted); }
+  .explain[open] summary { margin-bottom: 12px; }
+  .explain p { margin: 0 0 12px; }
+  .explain p:last-child { margin-bottom: 0; }
+  .explain b { color: var(--text-primary); font-weight: 600; }
+  .caveat { color: var(--text-muted); font-size: 12px; }
+
+  .guide { border-collapse: collapse; width: 100%; margin: 0 0 14px; }
+  .guide td { padding: 6px 0; vertical-align: baseline; border-top: 1px solid var(--border); }
+  .guide tr:first-child td { border-top: 0; }
+  .guide .g-band { white-space: nowrap; padding-right: 12px; }
+  .guide .g-band b { display: inline-flex; align-items: center; gap: 5px; }
+  .guide .g-range { color: var(--text-muted); font-size: 11px; display: block; margin-left: 14px; }
+
   .note {
     font-size: 12px; line-height: 1.6; color: var(--text-muted);
   }
@@ -159,6 +193,8 @@
 <body>
 <main>
   <h1>Run Window SG</h1>
+  <p class="tagline">Finds the least punishing time to run in the next 12 hours,
+    by how hard it will be for your body to shed heat.</p>
   <p class="sub" id="loc">Locating…</p>
 
   <div class="warn" id="geowarn" hidden></div>
@@ -170,11 +206,44 @@
   </div>
 
   <div class="card" id="strip" hidden>
+    <div class="colhead">
+      <span>hour</span>
+      <span class="colhead-scale"><i>easier</i><i>harder</i></span>
+      <span class="colhead-r">WBGT</span>
+      <span></span>
+    </div>
     <div class="rows" id="rows"></div>
     <div class="legend" id="legend"></div>
   </div>
 
-  <p class="note" id="method" hidden></p>
+  <details class="card explain" id="explain" hidden>
+    <summary>How to read this</summary>
+
+    <p><b>WBGT is not air temperature.</b> It folds heat, humidity, sun and wind into a
+    single number for how hard your body has to work to stay cool. Singapore's humidity
+    is what makes it bite: 30° WBGT is far more punishing than 30° on a thermometer.
+    Sweat can't evaporate, so you can't dump heat.</p>
+
+    <p>Each row is one hour. The <b>bar length</b> is that hour's WBGT — shorter is
+    easier. The highlighted rows are the recommended window.</p>
+
+    <table class="guide" id="guide"></table>
+
+    <p><b>Struck-out hours are rain-vetoed.</b> Any hour with at least a
+    <span id="veto-pct"></span> chance of rain is ruled out no matter how good its heat
+    score. On a thundery day that can eliminate most of the afternoon — that's the
+    forecast being honest, not the app being broken.</p>
+
+    <p class="caveat"><b>Worth knowing before you trust it.</b> The WBGT here is
+    <i>estimated</i> from Open-Meteo's hourly forecast, not measured. It uses
+    thermodynamic wet-bulb where the formula wants natural wet-bulb, so it reads
+    <b>low</b> — treat borderline hours as worse than shown. It is not NEA's official
+    WBGT, and the band cutoffs are set for people already acclimatised to the tropics.
+    Use it to pick between hours, not to decide whether heatstroke is possible.</p>
+
+    <p class="caveat">Nothing here knows about you — your fitness, hydration, sleep, or
+    whether you're ill. It only knows the air.</p>
+  </details>
 </main>
 
 <script>
@@ -193,10 +262,14 @@ const CONFIG = {
   // bands are considerably stricter (they'd flag black-flag most SG afternoons,
   // which makes them useless here). Verify against a source you trust.
   BANDS: [
-    { max: 28,       key: 'good',     label: 'Good',    icon: '✓' },
-    { max: 30,       key: 'warning',  label: 'Caution', icon: '!'      },
-    { max: 32,       key: 'serious',  label: 'Curtail', icon: '!!'     },
-    { max: Infinity, key: 'critical', label: 'Avoid',   icon: '✕' },
+    { max: 28,       key: 'good',     label: 'Good',    icon: '✓',
+      advice: 'Train as normal. Usual hydration.' },
+    { max: 30,       key: 'warning',  label: 'Caution', icon: '!',
+      advice: 'Ease the pace and drink more than you think you need. Fine for an easy run, bad for intervals.' },
+    { max: 32,       key: 'serious',  label: 'Curtail', icon: '!!',
+      advice: 'Cut the distance, add walk breaks, stay in shade. Stop if you get a headache or stop sweating.' },
+    { max: Infinity, key: 'critical', label: 'Avoid',   icon: '✕',
+      advice: 'Move it indoors or to another day. Not worth it.' },
   ],
 
   // Black-globe temperature heuristic: Tg = Ta + k_solar*S - k_wind*v.
@@ -415,8 +488,26 @@ function renderVerdict(hours, win) {
     ? (win.start === 0 ? 'Now' : a.label)
     : `${win.start === 0 ? 'Now' : a.label}–${hourEndLabel(b.time)}`;
   $('v-detail').innerHTML =
-    `${band.icon} <b>${band.label}</b> · WBGT ${win.best.wbgt.toFixed(1)}°C `
-    + `at its best · rain ${win.best.pop}% · UV ${win.best.uv?.toFixed(1)}`;
+    `${band.icon} <b>${band.label}</b> — heat stress bottoms out at `
+    + `WBGT ${win.best.wbgt.toFixed(1)}°, rain ${win.best.pop}%, UV ${win.best.uv?.toFixed(0)}.`
+    + `<br><span class="v-advice">${band.advice}</span>`;
+}
+
+function renderGuide() {
+  $('guide').innerHTML = CONFIG.BANDS.map((b, i) => {
+    const prev = i === 0 ? null : CONFIG.BANDS[i - 1].max;
+    const range = prev === null ? `under ${b.max}°`
+                : b.max === Infinity ? `${prev}° and up`
+                : `${prev}–${b.max}°`;
+    return `<tr>
+      <td class="g-band">
+        <b><i class="swatch" style="background:var(--${b.key})"></i>${b.icon} ${b.label}</b>
+        <span class="g-range">${range}</span>
+      </td>
+      <td>${b.advice}</td>
+    </tr>`;
+  }).join('');
+  $('veto-pct').textContent = `${CONFIG.RAIN_VETO_POP}%`;
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +534,12 @@ async function main() {
     + (pos ? '' : ` · ${CONFIG.FALLBACK.label}`)
     + ' · <button id="refresh">refresh</button>';
   $('refresh').onclick = () => {
-    try { localStorage.clear(); } catch {}
+    // Drop cached forecasts only - not the first-visit flag.
+    try {
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('rw:') && k !== 'rw:seen')
+        .forEach(k => localStorage.removeItem(k));
+    } catch {}
     location.reload();
   };
 
@@ -464,14 +560,18 @@ async function main() {
     const win = bestWindow(hours);
     renderVerdict(hours, win);
     renderRows(hours, win);
+    renderGuide();
     $('verdict').hidden = false;
     $('strip').hidden = false;
-    $('method').hidden = false;
-    $('method').innerHTML =
-      'WBGT estimated as <code>0.7·Twb + 0.2·Tg + 0.1·Ta</code> from Open-Meteo '
-      + 'hourly wet-bulb, air temperature, solar radiation and wind. Uses thermodynamic '
-      + 'wet-bulb rather than natural wet-bulb, so it reads low against NEA’s official '
-      + 'WBGT — this is an estimate, not a published figure.';
+    $('explain').hidden = false;
+
+    // Explain fully on a first visit, then stay out of the way.
+    try {
+      if (!localStorage.getItem('rw:seen')) {
+        $('explain').open = true;
+        localStorage.setItem('rw:seen', '1');
+      }
+    } catch { $('explain').open = true; }
   } catch (err) {
     $('geowarn').hidden = false;
     $('geowarn').textContent = `Could not load forecast: ${err.message}`;
